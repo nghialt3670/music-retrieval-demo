@@ -25,7 +25,7 @@ export default function RootLayout({
             <Music className="size-6" />
             <h1 className="text-xl font-bold">Music Retrieval Demo - CS336</h1>
           </div>
-          <Link href="https://github.com/nghialt3670/music-retrieval-demo">
+          <Link href="https://github.com/nguyenthanhhy0108/Music-Retrieval">
             <FaGithub className="size-6" />
           </Link>
         </header>
