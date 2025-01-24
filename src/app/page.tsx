@@ -1,113 +1,371 @@
-import Image from 'next/image'
+"use client";
 
-export default function Home() {
+import React, { useState, useRef } from 'react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Mic, Square, Upload, Play, Pause, Download, Search } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { to } from "await-to-js";
+import RecordRTC from 'recordrtc';
+import Link from 'next/link';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
+
+const AudioRecorder = () => {
+  const [isRecording, setIsRecording] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [videoInfos, setVideoInfos] = useState<Record<string, any>[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const recorderRef = useRef<any>(null);
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [rankingScore, setRankingScore] = useState<string>("final");
+  const [isSearching, setIsSearching] = useState(false);
+
+
+  const blobToFile = (blob: Blob, filename: string) => {
+    return new File([blob], filename, { type: blob.type });
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
+
+      recorderRef.current = new RecordRTC(stream, {
+        type: 'audio',
+        mimeType: 'audio/webm',
+        recorderType: RecordRTC.StereoAudioRecorder,
+        numberOfAudioChannels: 2,
+        desiredSampRate: 44100,
+        bufferSize: 16384,
+      });
+
+      recorderRef.current.startRecording();
+      setIsRecording(true);
+      setAudioUrl(null);
+      setAudioFile(null);
+    } catch (err) {
+      console.error('Error accessing microphone:', err);
+      toast({
+        title: "Microphone Error",
+        description: "Failed to access microphone. Please check permissions.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const stopRecording = () => {
+    recorderRef.current?.stopRecording(() => {
+      const blob = recorderRef.current.getBlob();
+      const file = blobToFile(blob, 'recording.mp3');
+
+      setAudioFile(file);
+      const url = URL.createObjectURL(file);
+      setAudioUrl(url);
+      setIsRecording(false);
+    });
+  };
+
+  const togglePlayback = () => {
+    if (!audioRef.current) return;
+
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play();
+      setIsPlaying(true);
+    }
+  };
+
+  const handleDownload = () => {
+    if (!audioFile) {
+      return;
+    }
+
+    const link = document.createElement('a');
+    link.href = audioUrl || '';
+    link.download = audioFile.name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!audioFile) {
+      return;
+    }
+  
+    setIsSearching(true); // Explicitly set searching to true
+    setVideoInfos([]); // Clear previous video info
+  
+    const formData = new FormData();
+    formData.append('file', audioFile);
+  
+    try {
+      const endpoint = `${process.env.NEXT_PUBLIC_API_URL}/results`;
+      const [fetchError, response] = await to(fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+      }));
+  
+      if (fetchError || !response.ok) {
+        console.error(fetchError?.stack);
+        toast({
+          title: "Error!",
+          description: "Failed to request server.",
+          variant: "destructive",
+        });
+        setIsSearching(false); // Reset searching state
+        return;
+      }
+  
+      const [jsonError, ranksPayload] = await to(response.json());
+  
+      if (jsonError || !ranksPayload?.result?.result) {
+        toast({
+          title: "Error!",
+          description: "Internal server error.",
+          variant: "destructive",
+        });
+        setIsSearching(false); // Reset searching state
+        return;
+      }
+  
+      const videoInfoPromises = ranksPayload.result.result.map(async (rank: any) => {
+        try {
+          const endpoint = `${process.env.NEXT_PUBLIC_API_URL}/song/${rank['song_id']}`;
+          const response = await fetch(endpoint);
+          const payload = await response.json();
+          const videoInfo = payload.result.result;
+          videoInfo.audioScore = rank['score_audio'];
+          videoInfo.textScore = rank['score_text'];
+          videoInfo.finalScore = rank['synthesized_score'];
+          return videoInfo;
+        } catch {
+          return null;
+        }
+      });
+  
+      const videoInfos = (await Promise.all(videoInfoPromises)).filter(info => info !== null);
+      setVideoInfos(videoInfos);
+    } catch (error) {
+      console.error(error);
+      toast({
+        title: "Error!",
+        description: "Unexpected error occurred.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSearching(false); // Reset searching state
+    }
+  
+    setAudioFile(null);
+    setAudioUrl(null);
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && file.type.startsWith('audio')) {
+      const url = URL.createObjectURL(file);
+      setAudioUrl(url);
+      setAudioFile(file);
+      toast({
+        title: 'File uploaded',
+        description: 'MP3 file uploaded successfully.',
+        variant: 'default',
+      });
+    } else {
+      toast({
+        title: 'Invalid file type',
+        description: 'Please upload a valid MP3 file.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const triggerFileInput = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleRankingScoreChange = (value: string) => {
+    if (value === rankingScore) {
+      return;
+    }
+    
+    if (value == "final") {
+      setVideoInfos(prev => prev.toSorted((a, b) => b.finalScore - a.finalScore))
+    } else if (value == "audio") {
+      setVideoInfos(prev => prev.toSorted((a, b) => b.audioScore - a.audioScore))
+    } else if (value == "text") {
+      setVideoInfos(prev => prev.toSorted((a, b) => b.textScore - a.textScore))
+    }
+
+    setRankingScore(value)
+  }
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 max-w-5xl w-full items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">src/app/page.tsx</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:h-auto lg:w-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{' '}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
-        </div>
-      </div>
+    <main className='flex h-full'>
+      <div className='w-full flex flex-col md:flex-row gap-4 p-4 h-full'>
+        <Card className='h-fit w-full md:w-1/3'>
+          <CardHeader>
+            <CardTitle>Sound input</CardTitle>
+          </CardHeader>
+          <CardContent className='flex flex-col space-y-4'>
+            <div className="grid grid-rows-2 grid-cols-1 sm:grid-rows-1 sm:grid-cols-2 gap-4">
+              <Button
+                disabled={isSearching}
+                onClick={isRecording ? stopRecording : startRecording}
+                variant={isRecording ? "destructive" : "default"}
+              >
+                {isRecording ? (
+                  <>                
+                    <Square />
+                    <div>Stop</div>
+                  </>
+                ) : (
+                  <>
+                    <Mic />
+                    <div>Record</div>
+                  </>
+                )
+                }
+              </Button>
+              <Button 
+                disabled={isSearching}
+                onClick={triggerFileInput}
+              >
+                <Upload />
+                <div>Upload</div>
+                <input
+                  ref={fileInputRef}
+                  id="file-upload"
+                  type="file"
+                  accept="audio/mp3"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+              </Button>
+            </div>
 
-      <div className="relative flex place-items-center before:absolute before:h-[300px] before:w-[480px] before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-[240px] after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 before:lg:h-[360px] z-[-1]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
-
-      <div className="mb-32 grid text-center lg:max-w-5xl lg:w-full lg:mb-0 lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Docs{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Learn{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Templates{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Explore the Next.js 13 playground.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Deploy{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
+            {audioUrl && (
+              <>
+                <audio 
+                  ref={audioRef} 
+                  src={audioUrl} 
+                  onEnded={() => setIsPlaying(false)}
+                  className="hidden"
+                />
+                <div className="grid grid-rows-2 grid-cols-1 md:grid-rows-1 md:grid-cols-2 gap-4">
+                  <Button 
+                    onClick={togglePlayback}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    {isPlaying ? (
+                      <>
+                        <Pause className="w-4 h-4 mr-2" />
+                        Pause
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4 mr-2" />
+                        Play
+                      </>
+                    )}
+                  </Button>
+                  <Button 
+                    onClick={handleDownload}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    Download
+                  </Button>
+                </div>
+              </>
+            )}
+          </CardContent>
+          <CardFooter>
+            <Button 
+              onClick={handleSubmit}
+              className="w-full"
+              disabled={isSearching || !audioUrl}
+            >
+              <Search className="w-4 h-4 mr-2" />
+              {isSearching ? 'Searching...' : 'Search'}
+            </Button>
+          </CardFooter>
+        </Card>
+        <Card className='w-full md:w-2/3 flex flex-col h-full'>
+          <CardHeader className='flex flex-row justify-between'>
+            <CardTitle>Search results</CardTitle>
+            <div className='flex flex-row justify-center gap-2'>
+              <Select value={rankingScore} onValueChange={handleRankingScoreChange}>
+                <SelectTrigger className='flex flex-row gap-2 font-bold'>
+                  <div className='font-light'>Ranked by:</div>
+                  <SelectValue defaultValue={rankingScore} className='font-bold'></SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="final" className='font-bold'>Final Score</SelectItem>
+                  <SelectItem value="audio" className='font-bold'>Audio Score</SelectItem>
+                  <SelectItem value="text" className='font-bold'>Text Score</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardHeader>
+          <CardContent className='flex flex-col h-full'>
+            <div className='flex flex-col w-full max-h-[450px] md:max-h-[700px] overflow-y-scroll overflow-x-hidden'>
+              {isSearching ? (
+                <>
+                  {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(i => <Skeleton key={i} className='h-52 w-full my-2'></Skeleton>)}
+                </>
+              ) : (
+                <>
+                  {videoInfos.map((info, index) => (
+                    <Card key={info.id} className='my-2 w-full'>
+                      <CardHeader className='p-2'>
+                        <CardTitle>
+                          <div className='flex flex-row gap-2'>
+                            <div>#{index + 1}</div>
+                            {rankingScore == "final" && <div className='font-light'>Final score: <span className='italic'>{(info.finalScore / 100).toFixed(3)}</span></div>}
+                            {rankingScore == "audio" && <div className='font-light'>Audio score: <span className='italic'>{info.audioScore.toFixed(3)}</span></div>}
+                            {rankingScore == "text" && <div className='font-light'>Text score: <span className='italic'>{(info.textScore / 100).toFixed(3)}</span></div>}
+                          </div>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className='p-2'>
+                        <Link href={info.url || ""}>
+                          <div className="flex flex-row items-center space-x-2">
+                            <img src={info.thumbnails ? info.thumbnails[0].url : ""} className="h-12 rounded-lg" />
+                            <Button variant="link" className="whitespace-normal text-left h-fit p-1">
+                              {info.title}
+                            </Button>
+                          </div>
+                        </Link>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </main>
-  )
-}
+  );
+};
+
+export default AudioRecorder;
