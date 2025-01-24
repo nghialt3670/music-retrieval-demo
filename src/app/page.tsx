@@ -6,7 +6,6 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { Mic, Square, Upload, Play, Pause, Download, Search } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { to } from "await-to-js";
-import RecordRTC from 'recordrtc';
 import Link from 'next/link';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -31,6 +30,10 @@ const AudioRecorder = () => {
 
   const startRecording = async () => {
     try {
+      if (typeof window === 'undefined') {
+        return;
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: false,
@@ -38,6 +41,8 @@ const AudioRecorder = () => {
           autoGainControl: true
         } 
       });
+
+      const RecordRTC = (await import('recordrtc')).default;
 
       recorderRef.current = new RecordRTC(stream, {
         type: 'audio',
