@@ -340,7 +340,7 @@ const AudioRecorder = () => {
                         <CardTitle>
                           <div className='flex flex-row gap-2'>
                             <div>#{index + 1}</div>
-                            {rankingScore == "final" && <div className='font-light'>Final score: <span className='italic'>{(info.finalScore / 100).toFixed(3)}</span></div>}
+                            {rankingScore == "final" && <div className='font-light'>Final score: <span className='italic'>{(info.finalScore / 1000).toFixed(3)}</span></div>}
                             {rankingScore == "audio" && <div className='font-light'>Audio score: <span className='italic'>{info.audioScore.toFixed(3)}</span></div>}
                             {rankingScore == "text" && <div className='font-light'>Text score: <span className='italic'>{(info.textScore / 100).toFixed(3)}</span></div>}
                           </div>
